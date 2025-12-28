@@ -1,12 +1,20 @@
+#######################################
 # BitNeural32 - Keywords for Arduino IDE syntax highlighting
+#######################################
 
+#######################################
 # Data types (KEYWORD1)
+#######################################
+
 bitneural_t	KEYWORD1
 layer_t	KEYWORD1
 layer_config_t	KEYWORD1
 inference_context_t	KEYWORD1
 
+#######################################
 # Functions (KEYWORD2)
+#######################################
+
 bitneural_init	KEYWORD2
 bitneural_infer	KEYWORD2
 bitneural_free	KEYWORD2
@@ -31,7 +39,10 @@ quantize_weight	KEYWORD2
 dequantize_weight	KEYWORD2
 unpack_weight	KEYWORD2
 
+#######################################
 # Constants (KEYWORD3)
+#######################################
+
 OPCODE_INPUT_NORM	KEYWORD3
 OPCODE_CONV1D_TERNARY	KEYWORD3
 OPCODE_DENSE_TERNARY	KEYWORD3

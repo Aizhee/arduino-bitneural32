@@ -4,7 +4,7 @@
 
 // Example 1: Basic Inference with Metrics
 // ----------------------------------------
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "model_data.h"  // Generated with allow_metrics=True
 
 void setup() {
@@ -54,7 +54,7 @@ void loop() {
 // Example 2: LSTM for Sequence Processing
 // ============================================
 
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "lstm_model.h"  // Model with LSTM layer
 
 #define SEQUENCE_LENGTH 10
@@ -130,7 +130,7 @@ void read_timestep_data(float* buffer, int timestep) {
 // Example 3: GRU for Audio Classification
 // ============================================
 
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "audio_gru_model.h"
 
 #define AUDIO_FRAMES 20
@@ -217,7 +217,7 @@ void collect_audio_frame(float* frame) {
 // Example 4: Multi-Model Inference with RAM Protection
 // ============================================
 
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "feature_extractor.h"  // Lightweight feature model
 #include "classifier_model.h"   // Classification model
 
@@ -271,7 +271,7 @@ void loop() {
 // Example 5: Real-time Dual-Core Processing
 // ============================================
 
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "model1.h"
 #include "model2.h"
 #include <freertos/FreeRTOS.h>

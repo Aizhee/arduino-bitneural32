@@ -22,7 +22,7 @@
 arduino-bitneural32/
 ├── src/
 │   ├── bitneural.c          # Inference interpreter engine
-│   ├── bitneural.h          # Core API and definitions
+│   ├── BitNeural32.h          # Core API and definitions
 │   └── kernels.c            # 15+ layer implementations
 ├── examples/
 │   └── examples.h           # Example usage and sketches
@@ -135,7 +135,7 @@ Notes:
 ### Step 3: Run on ESP32
 
 ```c
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "model_data.h"
 
 void app_main() {
@@ -410,7 +410,7 @@ print(f"  Layers: {report['num_layers']}")
 ### C: Run on ESP32
 
 ```c
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include "model_data.h"
 #include <stdio.h>
 

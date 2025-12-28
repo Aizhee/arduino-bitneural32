@@ -1,4 +1,4 @@
-#include "bitneural.h"
+#include "BitNeural32.h"
 #include <string.h>
 #include <stdlib.h>
 
