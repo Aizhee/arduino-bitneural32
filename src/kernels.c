@@ -40,30 +40,40 @@ static inline float fast_tanh(float x) {
 }
 
 /* ============================================
- * Weight Unpacking with Packet Processing
- * ============================================ */
+ * Weight Unpacking: Keep as int8 {-1, 0, 1}
+ * ============================================
+ * Cast to bn_act_t only at MAC point.
+ * This preserves quantization efficiency on all platforms.
+ */
 
 /**
- * Batch unpack 4 weights from a single byte.
+ * Unpack 4 ternary weights from a single byte.
+ * Returns int8_t values: -1, 0, or +1
+ *
+ * Encoding:
+ *   00 = 0
+ *   01 = +1
+ *   10 = -1
+ *   11 = reserved
  */
-static inline void unpack_weight(uint8_t packed_byte, float* weights_out) {
-    /* Extract each 2-bit group and convert to float immediately */
+static inline void unpack_weight(uint8_t packed_byte, int8_t* weights_out) {
+    /* Extract each 2-bit group and convert to int8 immediately */
     
     /* Weight 0: bits 7-6 */
     uint8_t w0 = (packed_byte >> 6) & 0x03;
-    weights_out[0] = (w0 == 1) ? 1.0f : (w0 == 2) ? -1.0f : 0.0f;
+    weights_out[0] = (w0 == 1) ? 1 : (w0 == 2) ? -1 : 0;
     
     /* Weight 1: bits 5-4 */
     uint8_t w1 = (packed_byte >> 4) & 0x03;
-    weights_out[1] = (w1 == 1) ? 1.0f : (w1 == 2) ? -1.0f : 0.0f;
+    weights_out[1] = (w1 == 1) ? 1 : (w1 == 2) ? -1 : 0;
     
     /* Weight 2: bits 3-2 */
     uint8_t w2 = (packed_byte >> 2) & 0x03;
-    weights_out[2] = (w2 == 1) ? 1.0f : (w2 == 2) ? -1.0f : 0.0f;
+    weights_out[2] = (w2 == 1) ? 1 : (w2 == 2) ? -1 : 0;
     
     /* Weight 3: bits 1-0 */
     uint8_t w3 = (packed_byte >> 0) & 0x03;
-    weights_out[3] = (w3 == 1) ? 1.0f : (w3 == 2) ? -1.0f : 0.0f;
+    weights_out[3] = (w3 == 1) ? 1 : (w3 == 2) ? -1 : 0;
 }
 
 
@@ -89,7 +99,12 @@ void kernel_input_norm(bn_context_t* ctx) {
 /**
  * DENSE_TERNARY: Dense (fully-connected) layer with 1.58-bit quantization.
  * 
- * Params: [int units][packed 2-bit weights][float bias (optional)]
+ * PORTABLE IMPLEMENTATION:
+ * - Works on ALL ESP32 variants (FPU or integer-only)
+ * - Uses BN_MAC macro for platform-specific math (float or int16)
+ * - Keeps weights as int8, casts to bn_act_t only at MAC point
+ * 
+ * Params: [int units][packed 2-bit weights][bias array (optional)]
  */
 void kernel_dense_ternary(bn_context_t* ctx) {
     const uint8_t* params_ptr = ctx->params;
@@ -100,24 +115,23 @@ void kernel_dense_ternary(bn_context_t* ctx) {
     int weight_matrix_size = (ctx->input_len * units + 3) / 4;
     params_ptr += weight_matrix_size;
     
-    float* bias = (float*)params_ptr;
+    bn_act_t* bias = (bn_act_t*)params_ptr;
     
     for (int out_idx = 0; out_idx < units; out_idx++) {
-        float acc = bias ? bias[out_idx] : 0.0f;
+        bn_act_t acc = bias ? bias[out_idx] : 0;
         
         /* Process weights in batches of 4 (per byte) */
         const uint8_t* weight_base = weights + (out_idx * ctx->input_len) / 4;
-        int weight_offset = (out_idx * ctx->input_len) % 4;
         
-        float unpacked[4];
+        int8_t unpacked[4];
         
         for (int in_idx = 0; in_idx < ctx->input_len; in_idx += 4) {
-            /* Unpack 4 weights at once */
+            /* Unpack 4 ternary weights (as int8, not float!) */
             unpack_weight(*weight_base++, unpacked);
             
-            /* Branchless MAC: multiply and accumulate (no branches!) */
+            /* Portable MAC: works on FPU and integer-only boards */
             for (int j = 0; j < 4 && in_idx + j < ctx->input_len; j++) {
-                acc += ctx->input[in_idx + j] * unpacked[j];  /* Simple FMA */
+                BN_MAC(acc, (bn_act_t)ctx->input[in_idx + j], unpacked[j]);
             }
         }
         
@@ -129,7 +143,7 @@ void kernel_dense_ternary(bn_context_t* ctx) {
 /**
  * CONV1D_TERNARY: 1D Convolution with 1.58-bit quantization.
  * 
- * Params: [int filters][int kernel_size][int stride][packed 2-bit weights][float bias (optional)]
+ * Params: [int filters][int kernel_size][int stride][packed 2-bit weights][bias (optional)]
  */
 void kernel_conv1d_ternary(bn_context_t* ctx) {
     const uint8_t* params_ptr = ctx->params;

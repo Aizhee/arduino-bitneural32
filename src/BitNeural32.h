@@ -2,6 +2,112 @@
 #define BITNEURAL_H
 
 #include <stdint.h>
+#include "bitneural_config.h"
+
+/* ============================================
+ * BitNeural32: 1.58-bit Neural Network Engine
+ * ============================================
+ * 
+ * FEATURE TIERS (by FPU capability):
+ *   Tier 1 (Universal):      Dense, Conv, ReLU, Pooling
+ *                            Works on ALL ESP32 (int16 accum)
+ *   Tier 2 (FPU-enabled):    + Softmax, Sigmoid, BatchNorm, Tanh
+ *                            ESP32, ESP32-S2, ESP32-S3
+ *   Tier 3 (S3 recommended): + LSTM, GRU
+ *                            ESP32/S3 best, C3/C2 not recommended
+ *
+ * See README.md for detailed board capability matrix.
+ * ============================================
+ */
+
+/* ============================================
+ * Activation Datatype Resolution
+ * ============================================
+ *
+ * Based on BN_ACTIVATION_MODE from bitneural_config.h
+ * This typedef is used for all accumulators.
+ *
+ * ACTIVATION FUNCTIONS (runtime-selectable via opcodes)
+ * ReLU, Sigmoid, Tanh, Softmax, BatchNorm, etc.
+ * Selected by model binary OpCode → dispatched via layer registry
+ * Never compile-time; always flexible and runtime-determined
+ *
+ * This separation is critical for MCUs:
+ * - Datatype affects kernel signatures and code size (must be fixed)
+ * - Functions are selected per-layer via OpCode dispatch (can be flexible)
+ */
+
+#if BN_ACTIVATION_MODE == BN_ACTIVATION_FLOAT
+  typedef float bn_act_t;
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT8
+  typedef int8_t bn_act_t;
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT16
+  typedef int16_t bn_act_t;
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT32
+  typedef int32_t bn_act_t;
+#else
+  #error "Invalid BN_ACTIVATION_MODE. Check bitneural_config.h"
+#endif
+
+/* ============================================
+ * Ternary Weight Storage
+ * ============================================
+ * Weights are always kept as int8 {-1, 0, 1}.
+ * Cast to bn_act_t only at MAC point.
+ */
+
+typedef int8_t bn_weight_t;  /* Always ternary: -1, 0, +1 */
+
+/* ============================================
+ * Target-Specific MAC (Multiply-Accumulate)
+ * ============================================
+ *
+ * Optimized for the selected activation datatype.
+ * Compile-time specialization: zero runtime cost.
+ *
+ * Usage: BN_MAC(accumulator, input, weight);
+ */
+
+#if BN_ACTIVATION_MODE == BN_ACTIVATION_FLOAT
+
+/* FPU Path: float32 multiply-accumulate */
+#define BN_MAC(acc, in_val, w_val) \
+    do { \
+        if ((w_val) == 1) { (acc) += (in_val); } \
+        else if ((w_val) == -1) { (acc) -= (in_val); } \
+    } while(0)
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT8
+
+/* Integer Path: int8 multiply-accumulate (Q3.4 fixed-point) */
+#define BN_MAC(acc, in_val, w_val) \
+    do { \
+        int8_t in_i8 = (int8_t)((in_val) * 16);  /* Fixed-point Q3.4 */ \
+        if ((w_val) == 1) { (acc) += in_i8; } \
+        else if ((w_val) == -1) { (acc) -= in_i8; } \
+    } while(0)
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT16
+
+/* Integer Path: int16 multiply-accumulate (Q7.8 fixed-point) */
+#define BN_MAC(acc, in_val, w_val) \
+    do { \
+        int16_t in_i16 = (int16_t)((in_val) * 128);  /* Fixed-point Q7.8 */ \
+        if ((w_val) == 1) { (acc) += in_i16; } \
+        else if ((w_val) == -1) { (acc) -= in_i16; } \
+    } while(0)
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT32
+
+/* Integer Path: int32 multiply-accumulate (higher precision) */
+#define BN_MAC(acc, in_val, w_val) \
+    do { \
+        int32_t in_i32 = (int32_t)((in_val) * 65536);  /* Fixed-point Q15.16 */ \
+        if ((w_val) == 1) { (acc) += in_i32; } \
+        else if ((w_val) == -1) { (acc) -= in_i32; } \
+    } while(0)
+
+#endif
 
 /* ============================================
  * OpCode Table: Blueprint for Layers
@@ -49,6 +155,29 @@
 #define DEFAULT_RAM_LIMIT   262144  /* 256 KB - typical available ESP32 RAM */
 
 /* ============================================
+ * Error Codes
+ * ============================================ */
+
+#define BN_SUCCESS                  0   /* Inference completed successfully */
+#define BN_ERR_INVALID_MODEL       -1   /* Invalid model magic number or format */
+#define BN_ERR_NULL_POINTER        -2   /* NULL pointer passed (input/output/model) */
+#define BN_ERR_INVALID_OPCODE      -3   /* Unknown or unregistered OpCode encountered */
+#define BN_ERR_RAM_EXCEEDED        -4   /* RAM limit exceeded during inference */
+#define BN_ERR_TENSOR_SIZE_MISMATCH -5  /* Input/output tensor size mismatch */
+
+/* ============================================
+ * Tensor Descriptor Structure
+ * ============================================
+ * Encapsulates tensor data and metadata.
+ * Used for clean layer-to-layer data passing.
+ */
+
+typedef struct {
+    float* data;            /* Pointer to tensor data buffer */
+    int length;             /* Number of elements in tensor */
+} bn_tensor_desc_t;
+
+/* ============================================
  * Context Structure
  * ============================================ */
 
@@ -82,12 +211,14 @@ typedef void (*bn_layer_func)(bn_context_t* ctx);
 
 void bn_init(void);
 void bn_register_custom_layer(int opcode, bn_layer_func func);
-void bn_run_inference(const uint8_t* model_data, float* input, float* output);
+
+/* Core inference functions: return status codes (0=success, negative=error) */
+int bn_run_inference(const uint8_t* model_data, float* input, float* output);
 
 /* NEW: Dual-core and RAM limiting API */
 void bn_set_board_type(int board_type);
 void bn_set_ram_limit(int max_bytes);
-void bn_run_inference_protected(const uint8_t* model_data, float* input, float* output, int max_ram);
+int bn_run_inference_protected(const uint8_t* model_data, float* input, float* output, int max_ram);
 
 /* ============================================
  * Kernel Function Declarations

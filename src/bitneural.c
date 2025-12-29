@@ -97,10 +97,16 @@ void bn_set_ram_limit(int max_bytes) {
  * 2. Dispatches each layer to the registry
  * 3. Manages ping-pong buffering
  * 4. Handles parameter streaming
+ *
+ * Returns: BN_SUCCESS (0) on success, or negative error code on failure
+ *   - BN_ERR_NULL_POINTER: input, output, or model_data is NULL
+ *   - BN_ERR_INVALID_MODEL: Invalid magic number or format
+ *   - BN_ERR_INVALID_OPCODE: Unknown opcode encountered
+ *   - BN_ERR_RAM_EXCEEDED: RAM limit exceeded
  */
-void bn_run_inference(const uint8_t* model_data, float* input, float* output) {
+int bn_run_inference(const uint8_t* model_data, float* input, float* output) {
     if (!model_data || !input || !output) {
-        return;
+        return BN_ERR_NULL_POINTER;
     }
     
     const uint8_t* data_ptr = model_data;
@@ -109,7 +115,7 @@ void bn_run_inference(const uint8_t* model_data, float* input, float* output) {
     /* ========== PARSE GLOBAL FILE HEADER ========== */
     /* Expected: Magic="BITN" (4 bytes), num_layers (int) */
     if (memcmp(data_ptr, "BITN", 4) != 0) {
-        return;  /* Invalid model magic number */
+        return BN_ERR_INVALID_MODEL;  /* Invalid model magic number */
     }
     data_ptr += 4;
     
@@ -119,28 +125,30 @@ void bn_run_inference(const uint8_t* model_data, float* input, float* output) {
     /* ========== LAYER DISPATCH LOOP ========== */
     float* current_input = input;
     float* current_output = output;
+    int current_input_len = 0;  /* Propagated from previous layer output_len */
     
     for (int layer_idx = 0; layer_idx < num_layers; layer_idx++) {
         /* Extract OpCode */
         int opcode = *data_ptr++;
         
-        /* Verify OpCode is registered */
-        if (!layer_registry[opcode]) {
-            /* OpCode not found; skip this layer's parameters */
-            int param_length = *((int*)data_ptr);
-            data_ptr += sizeof(int) + param_length;
-            continue;
-        }
-        
         /* Extract parameter length */
         int param_length = *((int*)data_ptr);
         data_ptr += sizeof(int);
         
+        /* Verify OpCode is registered */
+        if (!layer_registry[opcode]) {
+            /* OpCode not found; return error instead of silently skipping */
+            /* This prevents hard-to-debug issues from corrupted model data */
+            return BN_ERR_INVALID_OPCODE;
+        }
+        
         /* Setup context for this layer */
+        /* CRITICAL: input_len must be set before calling kernel */
+        /* Buffer management: Assumes two pre-allocated buffers for ping-pong */
         bn_context_t ctx = {
             .input = current_input,
             .output = current_output,
-            .input_len = 0,  /* Must be set by previous layer or user */
+            .input_len = current_input_len,  /* Propagated from previous layer */
             .output_len = 0, /* Will be set by kernel */
             .params = data_ptr,
             .hidden_state = NULL,
@@ -154,104 +162,35 @@ void bn_run_inference(const uint8_t* model_data, float* input, float* output) {
         /* Call the kernel function */
         layer_registry[opcode](&ctx);
         
-        /* Prepare for next layer: ping-pong buffering */
-        current_input = current_output;
-        /* Allocate new output buffer for next layer (or reuse if available) */
-        /* NOTE: In embedded systems, you'd pre-allocate two buffers */
-        current_output = (current_output == output) ? input : output;
+        /* Store output_len for next layer's input_len */
+        current_input_len = ctx.output_len;
         
-        /* Update input_len for next layer */
-        if (layer_idx + 1 < num_layers) {
-            /* The next layer's input_len = this layer's output_len */
-            /* (This is handled implicitly via ctx setup in next iteration) */
-        }
+        /* Prepare for next layer: ping-pong buffering */
+        /* IMPORTANT: This assumes two equal-sized buffers pre-allocated to max_tensor_size */
+        /* Kernels MUST NOT expand tensors beyond pre-allocated buffer size */
+        /* For variable-sized tensors, implement a buffer pool or dynamic allocation */
+        current_input = current_output;
+        current_output = (current_output == output) ? input : output;
         
         /* Move parameter pointer to next layer */
         data_ptr += param_length;
     }
+    
+    /* Inference completed successfully */
+    return BN_SUCCESS;
 }
 
 /**
  * NEW: Protected inference with RAM limiting.
  * Ensures inference does not exceed specified RAM budget.
  * max_ram: Maximum RAM to use in bytes
+ *
+ * Returns: BN_SUCCESS (0) on success, or negative error code on failure
  */
-void bn_run_inference_protected(const uint8_t* model_data, float* input, float* output, int max_ram) {
+int bn_run_inference_protected(const uint8_t* model_data, float* input, float* output, int max_ram) {
     int old_limit = g_ram_limit;
     bn_set_ram_limit(max_ram);
-    bn_run_inference(model_data, input, output);
+    int result = bn_run_inference(model_data, input, output);
     bn_set_ram_limit(old_limit);
-}
-
- /* This is the core runtime that:
- * 1. Parses the model binary format
- * 2. Dispatches each layer to the registry
- * 3. Manages ping-pong buffering
- * 4. Handles parameter streaming
- */
-void bn_run_inference(const uint8_t* model_data, float* input, float* output) {
-    if (!model_data || !input || !output) {
-        return;
-    }
-    
-    const uint8_t* data_ptr = model_data;
-    int num_layers;
-    
-    /* ========== PARSE GLOBAL FILE HEADER ========== */
-    /* Expected: Magic="BITN" (4 bytes), num_layers (int) */
-    if (memcmp(data_ptr, "BITN", 4) != 0) {
-        return;  /* Invalid model magic number */
-    }
-    data_ptr += 4;
-    
-    num_layers = *((int*)data_ptr);
-    data_ptr += sizeof(int);
-    
-    /* ========== LAYER DISPATCH LOOP ========== */
-    float* current_input = input;
-    float* current_output = output;
-    
-    for (int layer_idx = 0; layer_idx < num_layers; layer_idx++) {
-        /* Extract OpCode */
-        int opcode = *data_ptr++;
-        
-        /* Verify OpCode is registered */
-        if (!layer_registry[opcode]) {
-            /* OpCode not found; skip this layer's parameters */
-            int param_length = *((int*)data_ptr);
-            data_ptr += sizeof(int) + param_length;
-            continue;
-        }
-        
-        /* Extract parameter length */
-        int param_length = *((int*)data_ptr);
-        data_ptr += sizeof(int);
-        
-        /* Setup context for this layer */
-        bn_context_t ctx = {
-            .input = current_input,
-            .output = current_output,
-            .input_len = 0,  /* Must be set by previous layer or user */
-            .output_len = 0, /* Will be set by kernel */
-            .params = data_ptr
-        };
-        
-        /* Call the kernel function */
-        layer_registry[opcode](&ctx);
-        
-        /* Prepare for next layer: ping-pong buffering */
-        current_input = current_output;
-        /* Allocate new output buffer for next layer (or reuse if available) */
-        /* NOTE: In embedded systems, you'd pre-allocate two buffers */
-        current_output = (current_output == output) ? input : output;
-        
-        /* Update input_len for next layer */
-        if (layer_idx + 1 < num_layers) {
-            /* The next layer's input_len = this layer's output_len */
-            /* (This is handled implicitly via ctx setup in next iteration) */
-        }
-        
-        /* Move parameter pointer to next layer */
-        data_ptr += param_length;
-    }
+    return result;
 }

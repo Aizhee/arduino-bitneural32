@@ -16,6 +16,146 @@
 
 ---
 
+## Feature Tier Support Matrix
+
+BitNeural32 supports three feature tiers based on **floating-point hardware support**. Architectural choices are made explicit to ensure portability.
+
+### **Understanding FPU Hardware Differences**
+
+| Chip | FPU | Speed | Math Path | Tier A | Tier B | Tier C |
+|------|-----|-------|-----------|--------|--------|--------|
+| **ESP32** | ✅ 32-bit | 240 MHz, dual-core | Native float | ✅ Fast | ✅ Fast | ✅ Rec |
+| **ESP32-S2** | ✅ 32-bit | 240 MHz, single-core | Native float | ✅ Fast | ✅ Fast | ⚠️ Slow |
+| **ESP32-S3** | ✅ 32-bit + Vector | 240 MHz, dual-core | SIMD accelerated | ✅ Very Fast | ✅ Very Fast | ✅ Rec |
+| **ESP32-C3** | ❌ None | 160 MHz, single-core | Software float | ✅ Medium | ⚠️ Slow | ❌ Very Slow |
+| **ESP32-C2** | ❌ None | 120 MHz, single-core | Software float | ✅ Medium | ⚠️ Slow | ❌ Very Slow |
+
+**Key Insight**: On C3/C2, every float multiply is **software-emulated** (~50 cycles). Integer math is faster.
+
+---
+
+### **Tier 1: Universal (Integer-Only Baseline)**
+
+✅ **Works on**: All ESP32 variants (including C3, C2)  
+📦 **Compile with**: `-D BN_ACTIVATION_TYPE=int16_t` (optional, default is float)  
+⚡ **Performance**: Best on C3/C2, good on all boards  
+
+**Features**:
+- Dense, Conv1D, Conv2D with 1.58-bit quantization
+- ReLU, Leaky ReLU (branch-based, no float needed)
+- Max Pool, Avg Pool (integer accumulation)
+- Input normalization
+- Flat activation type (int16_t with Q7.8 fixed-point)
+
+**Example Use Case**: IoT edge inference, power-constrained devices, C3/C2 deployments
+
+**Compilation Example**:
+```bash
+# Build for ESP32-C3 (no FPU)
+idf.py -D BN_ACTIVATION_TYPE=int16_t build
+```
+
+---
+
+### **Tier 2: FPU-Optimized (Float Activations)**
+
+✅ **Works on**: ESP32, ESP32-S2, ESP32-S3  
+⚠️ **Not recommended for**: ESP32-C3, ESP32-C2 (software float is slow)  
+📦 **Compile with**: Default (or `-D BN_ACTIVATION_TYPE=float`)  
+
+**Additional Features**:
+- Softmax (requires float exponentiation)
+- Sigmoid, Tanh (with fast approximations)
+- Batch Normalization
+- Dropout (inference no-op, uses float)
+
+**Example Use Case**: Classification with probabilities, modern models
+
+---
+
+### **Tier 3: Advanced (Recurrent Networks)**
+
+✅ **Fully supported on**: ESP32, ESP32-S3  
+⚠️ **Experimental on**: ESP32-C3, ESP32-C2 (will be very slow, test throughly)  
+❌ **Not recommended on**: C3/C2 (LSTM/GRU are FPU-heavy)  
+
+**Additional Features**:
+- LSTM (stateful, 4 float gates per timestep)
+- GRU (stateful, 3 float gates per timestep)
+- Time-series and sequential processing
+
+**Example Use Case**: Speech recognition, activity detection, time-series forecasting
+
+---
+
+### **Board Decision Table**
+
+| Goal | Best Choice | Why |
+|------|-------------|-----|
+| **Maximum compatibility** | Tier 1 (int16) | Runs on all ESP32, fast on C3/C2 |
+| **Balanced performance** | Tier 2 + ESP32/S3 | Full feature set, proven performance |
+| **Sequential models** | Tier 3 + ESP32-S3 | Dual-core, 512 KB SRAM, SIMD help |
+| **Ultra-low power** | Tier 1 + C3/C2 | Smallest, lowest clock, integer math |
+| **Production (unknown board)** | Tier 1 default | Guaranteed to work, can upgrade features later |
+
+---
+
+## Feature Tier Support Matrix
+
+BitNeural32 supports three feature tiers across different ESP32 variants. Choose based on your board and model complexity.
+
+### **Tier A: Core Inference** (All ESP32 variants)
+✅ **Recommended for**: General-purpose inference, classification, regression  
+✅ **Fully Supported On**: ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C2  
+✅ **Features**:
+- Dense (fully connected) layers with 1.58-bit quantization
+- 1D & 2D Convolution with 1.58-bit quantization
+- ReLU, Leaky ReLU activations
+- Max Pool, Average Pool (1D)
+- Input normalization
+
+**Example Use Case**: Audio classification, sensor data analysis, simple image recognition
+
+---
+
+### **Tier B: Advanced Activations & Normalization** (ESP32, S2, S3 only)
+⚠️ **Not Recommended for**: ESP32-C3, ESP32-C2 (performance not guaranteed)  
+✅ **Fully Supported On**: ESP32, ESP32-S2, ESP32-S3  
+✅ **Additional Features**:
+- Softmax (multi-class classification)
+- Sigmoid (binary classification/gate)
+- Tanh (bounded non-linearity)
+- Batch Normalization
+- Dropout (inference no-op)
+
+**Example Use Case**: Multi-label classification, probabilistic models
+
+---
+
+### **Tier C: Recurrent Neural Networks** (ESP32, ESP32-S3 recommended)
+⚠️ **Experimental**: Limited testing on C3/C2  
+✅ **Recommended For**: ESP32, ESP32-S3  
+🔶 **Use With Caution On**: ESP32-C3, ESP32-C2 (may exceed RAM or require careful model sizing)  
+✅ **Additional Features**:
+- LSTM (Long Short-Term Memory) with stateful inference
+- GRU (Gated Recurrent Unit) with stateful inference
+- Sequential/time-series processing
+
+**Example Use Case**: Speech recognition, time-series forecasting, activity detection
+
+---
+
+### **Board Capability Reference**
+
+| Board | Tier A | Tier B | Tier C | Notes |
+|-------|--------|--------|--------|-------|
+| **ESP32** | ✅ Full | ✅ Full | ✅ Recommended | 240 MHz, dual core, 512 KB SRAM |
+| **ESP32-S2** | ✅ Full | ✅ Full | ⚠️ Limited | 240 MHz, single core, 320 KB SRAM |
+| **ESP32-S3** | ✅ Full | ✅ Full | ✅ Recommended | 240 MHz, dual core, 512 KB SRAM, SIMD |
+| **ESP32-C3** | ✅ Full | ⚠️ Caution | ⚠️ Experimental | 160 MHz, single core, 400 KB SRAM |
+
+---
+
 ## Project Structure
 
 ```
@@ -51,96 +191,39 @@ or
 
 ## OpCode Table: Supported Layers
 
-| OpCode | Layer Name | Parameters | Notes |
-|--------|-----------|------------|-------|
-| 0 | INPUT_NORM | mean, std | Input preprocessing |
-| 1 | CONV1D_TERNARY | filters, kernel_size, stride, weights | 1.58-bit quantized 1D conv |
-| 2 | DENSE_TERNARY | units, weights, bias | 1.58-bit quantized dense |
-| 3 | CONV2D_TERNARY | filters, kernel_h, kernel_w, stride, weights | 1.58-bit quantized 2D conv |
-| 10 | RELU | — | Rectified Linear Unit |
-| 11 | LEAKY_RELU | alpha | Leaky ReLU with slope |
-| 12 | SOFTMAX | — | Softmax (classification) |
-| 13 | SIGMOID | — | Sigmoid activation |
-| 14 | TANH | — | Hyperbolic tangent |
-| 20 | MAXPOOL_1D | pool_size, stride | 1D max pooling |
-| 21 | AVGPOOL_1D | pool_size, stride | 1D average pooling |
-| 22 | FLATTEN | — | No-op (memory already flat) |
-| 23 | DROPOUT | rate | No-op at inference |
-| 30 | BATCH_NORM | channels, gamma, beta, mean, var | Batch normalization |
-| 40 | LSTM | hidden_size, weights, bias | LSTM cell with 2-bit quantized weights |
-| 41 | GRU | hidden_size, weights, bias | GRU cell with 2-bit quantized weights |
-| 255 | CUSTOM | custom_id | User-defined custom layer |
+| Tier | OpCode | Layer Name | Parameters | Notes |
+|------|--------|-----------|------------|-------|
+| **A** | 0 | INPUT_NORM | mean, std | Input preprocessing |
+| **A** | 1 | CONV1D_TERNARY | filters, kernel_size, stride, weights | 1.58-bit quantized 1D conv |
+| **A** | 2 | DENSE_TERNARY | units, weights, bias | 1.58-bit quantized dense |
+| **A** | 3 | CONV2D_TERNARY | filters, kernel_h, kernel_w, stride, weights | 1.58-bit quantized 2D conv |
+| **A** | 10 | RELU | — | Rectified Linear Unit |
+| **A** | 11 | LEAKY_RELU | alpha | Leaky ReLU with slope |
+| **B** | 12 | SOFTMAX | — | Softmax (multi-class classification) |
+| **B** | 13 | SIGMOID | — | Sigmoid activation (binary/gate) |
+| **B** | 14 | TANH | — | Hyperbolic tangent |
+| **A** | 20 | MAXPOOL_1D | pool_size, stride | 1D max pooling |
+| **A** | 21 | AVGPOOL_1D | pool_size, stride | 1D average pooling |
+| **A** | 22 | FLATTEN | — | No-op (memory already flat) |
+| **B** | 23 | DROPOUT | rate | No-op at inference |
+| **B** | 30 | BATCH_NORM | channels, gamma, beta, mean, var | Batch normalization |
+| **C** | 40 | LSTM | hidden_size, weights, bias | LSTM cell with 2-bit quantized weights (stateful) |
+| **C** | 41 | GRU | hidden_size, weights, bias | GRU cell with 2-bit quantized weights (stateful) |
+| **—** | 255 | CUSTOM | custom_id | User-defined custom layer |
 
 ---
 
-## Usage Guide
+## Deployment Guide
 
-### Step 1: Install BitNeural32 with pip
-```bash
-pip install bitneural32
-```
+### Step 1: Genenrate your model
 
-### Step 2: Train Your Keras Model
+> Learn more at [Python Compiler library](https://github.com/Aizhee/python-bitneural32/blob/main/README.md#installation)
 
-```python
-import keras
-
-model = keras.Sequential([
-    keras.layers.Dense(64, activation='relu', input_shape=(10,)),
-    keras.layers.Dense(32, activation='relu'),
-    keras.layers.Dense(10, activation='softmax')
-])
-
-model.compile(loss='categorical_crossentropy', optimizer='adam')
-model.fit(X_train, Y_train, epochs=10)
-model.save('classifier.h5')
-```
-
-### Step 3: Compile to C Header
-
-```python
-from bitneural32.compiler import BitNeuralCompiler
-
-compiler = BitNeuralCompiler()
-compiler.compile_model(model, input_data=X_train)
-compiler.save_c_header('model_data.h')
-```
-
-### Optional: Quantization-Aware Training (QAT)
-
-Use BitNeural32’s custom ternary layers to train models that match the runtime quantization behavior. This improves accuracy after export.
-
-```python
-import keras
-import numpy as np
-from bitneural32.qat import TernaryDense, TernaryConv1D
-from bitneural32.compiler import BitNeuralCompiler
-
-# 1. Build a QAT model (example: Dense)
-qat_model = keras.Sequential([
-    TernaryDense(32, activation='relu', input_shape=(8,)),
-    TernaryDense(16, activation='relu'),
-    TernaryDense(4, activation='softmax')
-])
-
-qat_model.compile(optimizer='adam', loss='mse')
-X_train = np.random.randn(200, 8)
-Y_train = np.random.randn(200, 4)
-qat_model.fit(X_train, Y_train, epochs=5, verbose=0)
-
-# 2. Export with the same compiler (QAT layers are recognized)
-compiler = BitNeuralCompiler()
-compiler.compile_model(qat_model, input_data=X_train)
-compiler.save_c_header('model_data_qat.h')
-```
-
-Notes:
-- `TernaryConv1D` assumes mono-channel inputs and flattens weights as (filters, kernel_size) for optimized ESP32 kernels. For multi-channel convolution, prefer standard `Conv2D` with appropriate reshaping.
-- QAT layers’ names (`TernaryDense`, `TernaryConv1D`) are mapped in the compiler and compiled using the optimized ternary kernels.
-
-### Step 3: Run on ESP32
+### Step 2: Run on ESP32
 
 #### Using Arduino IDE
+
+[Install the library](#installation)
 
 When using Arduino IDE, place the generated `model_data.h` file in the same directory as your sketch (`.ino` file). Arduino IDE will automatically include it during compilation.
 
@@ -156,22 +239,167 @@ My Sketches/
 Then include it in your sketch:
 
 ```c
+//forces activation function to use float
+#define BN_ACTIVATION_MODE BN_ACTIVATION_FLOAT 
+
 #include "BitNeural32.h"
 #include "model_data.h"
 
 void app_main() {
     bn_init();
+    bn_set_board_type(BOARD_ESP32_S3);  // Dual-core
     
     float input[10] = {...};
     float output[10];
     
-    bn_run_inference(model_data, input, output);
+    int status = bn_run_inference(model_data, input, output);
     
-    printf("Prediction: %f\n", output[0]);
+    if (status == BN_SUCCESS) {
+        printf("Prediction: %f\n", output[0]);
+    } else {
+        // Handle error
+        printf("Inference failed with code: %d\n", status);
+        if (status == BN_ERR_INVALID_OPCODE) {
+            printf("Model corruption or mismatched bitneural32 version\n");
+        }
+    }
 }
 ```
 
+#### Error Handling
+
+All inference functions return **status codes** for debugging:
+
+```c
+#define BN_SUCCESS                  0   /* Success */
+#define BN_ERR_INVALID_MODEL       -1   /* Bad magic number */
+#define BN_ERR_NULL_POINTER        -2   /* NULL input/output/model */
+#define BN_ERR_INVALID_OPCODE      -3   /* Unknown layer type */
+#define BN_ERR_RAM_EXCEEDED        -4   /* RAM budget exceeded */
+#define BN_ERR_TENSOR_SIZE_MISMATCH -5  /* Dimension mismatch */
+```
+
 ---
+
+## Configuration: Activation Datatype
+
+BitNeural32 uses **`bitneural_config.h`** for Arduino-friendly configuration. This lets you choose the numeric representation (float vs. integer) used for accumulators.
+
+### Three Configuration Patterns
+
+**Pattern A: Edit the Config Header (Recommended for Arduino IDE)**
+
+```c
+/* In bitneural_config.h */
+#define BN_ACTIVATION_MODE BN_ACTIVATION_INT16
+```
+
+Then compile normally. No flags needed.
+
+**Pattern B: Define Before Include (Advanced Arduino Users)**
+
+In your sketch (.ino file):
+```cpp
+#define BN_ACTIVATION_MODE BN_ACTIVATION_INT16
+#include <bitneural.h>
+
+void setup() {
+    // Rest of code...
+}
+```
+
+**Pattern C: Compiler Flag (PlatformIO / ESP-IDF)**
+
+In `platformio.ini`:
+```ini
+build_flags = -D BN_ACTIVATION_MODE=BN_ACTIVATION_INT16
+```
+
+Or in ESP-IDF:
+```bash
+idf.py -D BN_ACTIVATION_MODE=BN_ACTIVATION_INT16 build
+```
+
+---
+
+### Datatype Options
+
+```c
+#define BN_ACTIVATION_FLOAT   0  /* 32-bit float (default, FPU-optimized) */
+#define BN_ACTIVATION_INT8    1  /* 8-bit int (ultra-low memory, Q3.4 fixed-point) */
+#define BN_ACTIVATION_INT16   2  /* 16-bit int (integer-only, Q7.8 fixed-point) */
+#define BN_ACTIVATION_INT32   3  /* 32-bit int (higher precision, Q15.16 fixed-point) */
+```
+
+| Datatype | Best For | Memory | Speed | Precision | Range |
+|----------|----------|--------|-------|-----------|-------|
+| **FLOAT** | ESP32/S2/S3 with FPU | Higher | Fast | High | ±∞ |
+| **INT8** | Ultra-constrained (C2, Tier 1 only) | Lowest | Very Fast | Low (Q3.4) | ±7.9375 |
+| **INT16** | C3/C2 or power-saving | Lower | Fast (no FPU) | Medium (Q7.8) | ±127.99 |
+| **INT32** | High precision needs | Highest | Medium | Very High (Q15.16) | ±32767.99 |
+
+**Why Compile-Time?**
+- Affects kernel function signatures (parameter types)
+- Affects struct memory layout
+- Affects code size and ABI
+- Runtime switching would require unsafe void pointers or unions
+
+**Why Runtime for Functions?**
+- Activation functions (ReLU, Sigmoid, etc.) are always selected per-layer via OpCode
+- Professional pattern (TFLite, ONNX, etc.)
+
+---
+
+---
+
+### How This Works: The BN_MAC Abstraction
+
+All kernels use the **`BN_MAC()`** macro, which expands at compile-time to the correct math path:
+
+```c
+/* bitneural_config.h determines which path */
+#if BN_ACTIVATION_MODE == BN_ACTIVATION_FLOAT
+  #define BN_MAC(acc, in, w) \
+    if ((w) == 1) { (acc) += (in); } \
+    else if ((w) == -1) { (acc) -= (in); }
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT8
+  #define BN_MAC(acc, in, w) \
+    int8_t in_i8 = (int8_t)((in) * 16); \
+    if ((w) == 1) { (acc) += in_i8; } \
+    else if ((w) == -1) { (acc) -= in_i8; }
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT16
+  #define BN_MAC(acc, in, w) \
+    int16_t in_i16 = (int16_t)((in) * 128); \
+    if ((w) == 1) { (acc) += in_i16; } \
+    else if ((w) == -1) { (acc) -= in_i16; }
+
+#elif BN_ACTIVATION_MODE == BN_ACTIVATION_INT32
+  #define BN_MAC(acc, in, w) \
+    int32_t in_i32 = (int32_t)((in) * 65536); \
+    if ((w) == 1) { (acc) += in_i32; } \
+    else if ((w) == -1) { (acc) -= in_i32; }
+#endif
+```
+
+**Kernel code (single source, works with any datatype):**
+
+```c
+void kernel_dense_ternary(bn_context_t* ctx) {
+    for (int out = 0; out < units; out++) {
+        bn_act_t acc = bias[out];  /* float or int16_t, doesn't matter */
+        
+        for (int in = 0; in < ctx->input_len; in += 4) {
+            unpack_weight(*weight_ptr++, unpacked);
+            for (int j = 0; j < 4; j++) {
+                BN_MAC(acc, input[in + j], unpacked[j]);  /* Expands correctly */
+            }
+        }
+        output[out] = acc;
+    }
+}
+```
 
 ## Architecture Overview
 
@@ -190,6 +418,37 @@ void app_main() {
 - **Pooling**: Max Pool 1D, Avg Pool 1D
 - **Normalization**: INPUT_NORM, BATCH_NORM
 - **Structural**: Flatten, Dropout (no-op at inference)
+
+### Memory & Buffer Management
+
+**Ping-Pong Buffer Strategy**:
+- Inference uses two pre-allocated buffers of equal size
+- Layer outputs alternate between them (buffer A → B → A → ...)
+- Reduces memory footprint: 2× max_tensor_size instead of N× for N layers
+
+**RAM Budget Control**:
+```c
+// Set max RAM usage before inference
+bn_set_ram_limit(256 * 1024);  // 256 KB limit
+int status = bn_run_inference_protected(model, input, output, 256 * 1024);
+
+if (status == BN_ERR_RAM_EXCEEDED) {
+    // Model too large for available RAM
+}
+```
+
+**Tensor Metadata**:
+- Input/output dimensions automatically propagated between layers
+- Each layer receives `input_len` from previous layer's `output_len`
+- Kernel must set `ctx.output_len` before returning
+
+**For Custom Layers**:
+```c
+typedef struct {
+    float* data;            /* Tensor buffer */
+    int length;             /* Number of elements */
+} bn_tensor_desc_t;        /* For future buffer management APIs */
+```
 
 ### Python Compiler (`compiler.py`)
 
@@ -399,69 +658,6 @@ target_link_libraries(bitneural PRIVATE m)
 
 ---
 
-## Complete Example Workflow
-
-### Python: Train and Export
-
-```python
-import keras
-import numpy as np
-from bitneural32.compiler import BitNeuralCompiler
-
-# 1. Create and train model
-model = keras.Sequential([
-    keras.layers.Dense(32, activation='relu', input_shape=(8,)),
-    keras.layers.Dense(16, activation='relu'),
-    keras.layers.Dense(4, activation='softmax')
-])
-
-model.compile(optimizer='adam', loss='mse')
-X_train = np.random.randn(100, 8)
-Y_train = np.random.randn(100, 4)
-model.fit(X_train, Y_train, epochs=5, verbose=0)
-
-# 2. Compile to BitNeural format
-compiler = BitNeuralCompiler()
-compiler.compile_model(model, input_data=X_train)
-compiler.save_c_header('model_data.h')
-
-# 3. Show report
-report = compiler.get_compilation_report()
-print(f"✓ Model compiled: {report['total_size_bytes']} bytes")
-print(f"  Layers: {report['num_layers']}")
-```
-
-### C: Run on ESP32
-
-```c
-#include "BitNeural32.h"
-#include "model_data.h"
-#include <stdio.h>
-
-void app_main() {
-    // Initialize and configure
-    bn_init();
-    bn_set_board_type(BOARD_ESP32_S3);  // Enable SIMD on S3
-    bn_set_ram_limit(256 * 1024);       // 256 KB RAM limit
-    
-    // Prepare input
-    float input[8] = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
-    float output[4];
-    
-    // Run inference with RAM protection
-    printf("Running inference...\n");
-    bn_run_inference_protected(model_data, input, output, 256 * 1024);
-    
-    // Display results
-    printf("Output probabilities:\n");
-    for (int i = 0; i < 4; i++) {
-        printf("  Class %d: %.6f\n", i, output[i]);
-    }
-}
-```
-
----
-
 ## API Reference
 
 ### Core Functions
@@ -531,6 +727,71 @@ typedef void (*bn_layer_func)(bn_context_t* ctx);
 
 ---
 
+## Troubleshooting & Feature Support
+
+### Choosing the Right Tier for Your Board
+
+**I have ESP32 with LSTM/GRU layer and it runs slowly or crashes**
+- Your board: **ESP32-C3, ESP32-C2**
+- ✅ **Solution**: Downgrade to **Tier B** (remove LSTM/GRU), or upgrade to **ESP32-S3**
+- 📝 **Why**: C3/C2 have single core @ 160/120 MHz; recurrent layers need more compute
+
+**I'm getting BN_ERR_RAM_EXCEEDED on ESP32-C2**
+- Your board: **ESP32-C2** (~272 KB SRAM)
+- ✅ **Solution**:
+  1. Reduce model size (fewer dense units)
+  2. Use `bn_set_ram_limit(150 * 1024)` to enforce stricter budget
+  3. Stick to **Tier A** (Dense, Conv, ReLU, Pooling only)
+
+**Softmax or Sigmoid gives incorrect probabilities**
+- ✅ **Check**: Did you compile with **Tier B** support? ([OpCode table](#opcode-table-supported-layers))
+- 📝 **Verify**: Model file header contains OpCode 12 or 13
+- ✅ **Fallback**: Use ReLU-based classification if Tier B unavailable
+
+### Performance & FPU Issues
+
+**Inference is very slow on ESP32-C3/C2**
+
+Your board has **no hardware FPU**. All float operations are software-emulated.
+
+- ✅ **Solution 1 (Recommended)**: Compile with integer activations
+  ```bash
+  idf.py -D BN_ACTIVATION_TYPE=int16_t build
+  ```
+  This forces **Tier 1** (int16 fixed-point), which runs 2-5× faster on C3/C2.
+
+- ✅ **Solution 2**: Reduce model complexity
+  - Fewer dense units (e.g., 16 → 8)
+  - Shorter sequences (recurrent models)
+  - Remove Softmax/Sigmoid if possible
+
+- ✅ **Solution 3**: Profile and optimize bottleneck
+  ```c
+  // Add cycle counter before/after kernel
+  uint32_t start = xthal_get_ccount();
+  kernel_dense_ternary(&ctx);
+  uint32_t end = xthal_get_ccount();
+  printf("Dense took %lu cycles\n", end - start);
+  ```
+
+**Why is Softmax/Sigmoid slow on any board?**
+
+These functions require **exponential computation** (even with approximations, ~50-100 cycles).
+
+- ✅ **For classification**: Use ReLU + argmax instead if acceptable
+- ✅ **For gating**: Use Leaky ReLU (single branch, no exp)
+- 📝 **Best practice**: Offload expensive activations to the cloud if time-critical
+
+**LSTM/GRU timeout on ESP32-C3**
+
+Recurrent layers have **4× the compute** of dense (4 gates).
+
+- ✅ **Solution**: Use **ESP32 or S3** for LSTM/GRU
+- ✅ **Alternative**: Replace with dilated 1D Conv (cheaper approximation)
+- ✅ **Fallback**: Reduce hidden size (e.g., 64 → 32)
+
+---
+
 ## Troubleshooting
 
 ### "Unsupported layer type" during compilation
@@ -552,6 +813,30 @@ BitNeuralCompiler.LAYER_COMPILER_MAP['MyLayer'] = MyLayerCompiler
 - **Magic number mismatch**: Verify model data starts with "BITN"
 - **Buffer overflow**: Check input/output buffer sizes
 - **Uninitialized weights**: Ensure model_data is properly linked in memory
+
+### Understanding Error Codes
+
+**BN_ERR_INVALID_OPCODE (-3)**
+- **Cause**: Model contains unsupported layer (OpCode not registered)
+- **Solution**: 
+  - Verify model matches compiled BitNeural32 version
+  - Check if layer is in your [feature tier](#feature-tier-support-matrix)
+  - Re-compile model with `bitneural32 compiler --tier-check`
+
+**BN_ERR_INVALID_MODEL (-1)**
+- **Cause**: Model data corrupted or not compiled with BitNeural32
+- **Solution**: Re-generate model from Python compiler
+
+**BN_ERR_NULL_POINTER (-2)**
+- **Cause**: Input, output, or model_data pointer is NULL
+- **Solution**: Check all pointers are properly initialized before `bn_run_inference()`
+
+**BN_ERR_RAM_EXCEEDED (-4)**
+- **Cause**: Inference would exceed RAM budget
+- **Solution**: 
+  - Reduce `bn_set_ram_limit()` value
+  - Simplify model (fewer units/filters)
+  - Use smaller data types if possible
 
 ### Inference is slow
 

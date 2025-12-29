@@ -1,3 +1,5 @@
+#define BN_ACTIVATION_MODE BN_ACTIVATION_FLOAT
+
 #include "BitNeural32.h"
 #include "audio_gru_model.h" // Generated model headers not included
 

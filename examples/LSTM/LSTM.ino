@@ -1,3 +1,6 @@
+
+#define BN_ACTIVATION_MODE BN_ACTIVATION_FLOAT
+
 #include "BitNeural32.h"
 #include "lstm_model.h"  // Model with LSTM layer not included
 
@@ -14,7 +17,7 @@ float output[OUTPUT_SIZE];
 void setup() {
     Serial.begin(115200);
     bn_init();
-    bn_set_board_type(BOARD_ESP32);
+    bn_set_board_type(BOARD_ESP32_S3);
     
     Serial.println("LSTM Sequence Processing Model");
 }
