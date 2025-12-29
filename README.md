@@ -43,6 +43,10 @@ arduino-bitneural32/
 3. Restart Arduino IDE
 4. Library will appear under Sketch → Include Library → BitNeural32
 
+or
+
+**install it on the `arduino library manager`, just search for `"BitNeural32"`**
+
 ---
 
 ## OpCode Table: Supported Layers
@@ -63,13 +67,15 @@ arduino-bitneural32/
 | 22 | FLATTEN | — | No-op (memory already flat) |
 | 23 | DROPOUT | rate | No-op at inference |
 | 30 | BATCH_NORM | channels, gamma, beta, mean, var | Batch normalization |
+| 40 | LSTM | hidden_size, weights, bias | LSTM cell with 2-bit quantized weights |
+| 41 | GRU | hidden_size, weights, bias | GRU cell with 2-bit quantized weights |
 | 255 | CUSTOM | custom_id | User-defined custom layer |
 
 ---
 
 ## Usage Guide
 
-### Step 1: Install BitNeural32
+### Step 1: Install BitNeural32 with pip
 ```bash
 pip install bitneural32
 ```
@@ -77,12 +83,12 @@ pip install bitneural32
 ### Step 2: Train Your Keras Model
 
 ```python
-import tensorflow as tf
+import keras
 
-model = tf.keras.Sequential([
-    tf.keras.layers.Dense(64, activation='relu', input_shape=(10,)),
-    tf.keras.layers.Dense(32, activation='relu'),
-    tf.keras.layers.Dense(10, activation='softmax')
+model = keras.Sequential([
+    keras.layers.Dense(64, activation='relu', input_shape=(10,)),
+    keras.layers.Dense(32, activation='relu'),
+    keras.layers.Dense(10, activation='softmax')
 ])
 
 model.compile(loss='categorical_crossentropy', optimizer='adam')
@@ -105,13 +111,13 @@ compiler.save_c_header('model_data.h')
 Use BitNeural32’s custom ternary layers to train models that match the runtime quantization behavior. This improves accuracy after export.
 
 ```python
-import tensorflow as tf
+import keras
 import numpy as np
 from bitneural32.qat import TernaryDense, TernaryConv1D
 from bitneural32.compiler import BitNeuralCompiler
 
 # 1. Build a QAT model (example: Dense)
-qat_model = tf.keras.Sequential([
+qat_model = keras.Sequential([
     TernaryDense(32, activation='relu', input_shape=(8,)),
     TernaryDense(16, activation='relu'),
     TernaryDense(4, activation='softmax')
@@ -133,6 +139,21 @@ Notes:
 - QAT layers’ names (`TernaryDense`, `TernaryConv1D`) are mapped in the compiler and compiled using the optimized ternary kernels.
 
 ### Step 3: Run on ESP32
+
+#### Using Arduino IDE
+
+When using Arduino IDE, place the generated `model_data.h` file in the same directory as your sketch (`.ino` file). Arduino IDE will automatically include it during compilation.
+
+**Directory structure**:
+```
+My Sketches/
+├── MyNeuralNetworkProject/
+│   ├── MyNeuralNetworkProject.ino
+│   └── model_data.h          ← Place generated header here
+└── ...
+```
+
+Then include it in your sketch:
 
 ```c
 #include "BitNeural32.h"
@@ -309,9 +330,10 @@ float buffer_b[MAX_SIZE];
 
 - **Dense layer** (1000→1000): ~10-50 ms
 - **Conv1D** (100 inputs, 32 filters, kernel 5): ~5-20 ms
+- **LSTM layer** (32 units, 64 timesteps): ~20-80 ms
 - **Full network** (10→64→32→10): ~1-5 ms
 
-(Exact timings depend on clock speed, optimization flags, cache behavior)
+(Exact timings depend on clock speed, optimization flags, cache behavior, and board type)
 
 ### Optimization Tips
 
@@ -320,6 +342,8 @@ float buffer_b[MAX_SIZE];
 3. **Pre-allocate buffers** to avoid malloc overhead
 4. **Cache-friendly loops** in custom kernels
 5. **Profile with ESP32 profiler** to identify bottlenecks
+6. **Set board type**: Use `bn_set_board_type()` to enable hardware-specific optimizations (SIMD on ESP32-S3)
+7. **RAM limiting**: Use `bn_run_inference_protected()` on memory-constrained devices
 
 ---
 
@@ -330,7 +354,7 @@ float buffer_b[MAX_SIZE];
 - **GCC/Clang** (ESP32 toolchain or native for testing)
 - **CMake** ≥ 3.10
 - **Python 3.7+** (for compiler.py)
-  - Optional: TensorFlow, Keras, NumPy
+  - Required: Keras, NumPy
 - **FreeRTOS** (required for dual-core inference support)
   - Typically included with ESP-IDF for ESP32
 
@@ -380,15 +404,15 @@ target_link_libraries(bitneural PRIVATE m)
 ### Python: Train and Export
 
 ```python
-import tensorflow as tf
+import keras
 import numpy as np
 from bitneural32.compiler import BitNeuralCompiler
 
 # 1. Create and train model
-model = tf.keras.Sequential([
-    tf.keras.layers.Dense(32, activation='relu', input_shape=(8,)),
-    tf.keras.layers.Dense(16, activation='relu'),
-    tf.keras.layers.Dense(4, activation='softmax')
+model = keras.Sequential([
+    keras.layers.Dense(32, activation='relu', input_shape=(8,)),
+    keras.layers.Dense(16, activation='relu'),
+    keras.layers.Dense(4, activation='softmax')
 ])
 
 model.compile(optimizer='adam', loss='mse')
@@ -415,16 +439,18 @@ print(f"  Layers: {report['num_layers']}")
 #include <stdio.h>
 
 void app_main() {
-    // Initialize
+    // Initialize and configure
     bn_init();
+    bn_set_board_type(BOARD_ESP32_S3);  // Enable SIMD on S3
+    bn_set_ram_limit(256 * 1024);       // 256 KB RAM limit
     
     // Prepare input
     float input[8] = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
     float output[4];
     
-    // Run inference
+    // Run inference with RAM protection
     printf("Running inference...\n");
-    bn_run_inference(model_data, input, output);
+    bn_run_inference_protected(model_data, input, output, 256 * 1024);
     
     // Display results
     printf("Output probabilities:\n");
@@ -441,7 +467,7 @@ void app_main() {
 ### Core Functions
 
 #### `void bn_init(void)`
-Initialize layer registry. Call once at startup.
+Initialize layer registry and register all built-in kernels. Call once at startup.
 
 #### `void bn_run_inference(const uint8_t* model_data, float* input, float* output)`
 Execute inference pipeline.
@@ -458,15 +484,46 @@ Register custom kernel at runtime.
 - `opcode`: 0-255 (use 100-254 for custom)
 - `func`: Function matching `bn_layer_func` signature
 
+#### `void bn_set_board_type(int board_type)` **(NEW)**
+Set board type for hardware-specific optimization.
+
+**Parameters**:
+- `board_type`: `BOARD_ESP32` (single core), `BOARD_ESP32_S3` (dual core with SIMD), or `BOARD_ESP32_C3` (single core)
+
+#### `void bn_set_ram_limit(int max_bytes)` **(NEW)**
+Set maximum RAM available for inference to prevent memory exhaustion.
+
+**Parameters**:
+- `max_bytes`: Maximum RAM budget in bytes (default: 256 KB)
+
+#### `void bn_run_inference_protected(const uint8_t* model_data, float* input, float* output, int max_ram)` **(NEW)**
+Execute inference with RAM protection enabled.
+
+**Parameters**:
+- `model_data`: Binary model blob
+- `input`: Input feature vector
+- `output`: Output predictions
+- `max_ram`: Maximum RAM allowed for this inference (bytes)
+
 ### Structures
 
 ```c
 typedef struct {
-    float* input;           // Input buffer
-    float* output;          // Output buffer
-    int input_len;          // Input size
-    int output_len;         // Output size (set by kernel)
-    const uint8_t* params;  // Layer parameters
+    float* input;           /* Input buffer pointer */
+    float* output;          /* Output buffer pointer */
+    int input_len;          /* Length of input */
+    int output_len;         /* Length of output (must be set by kernel) */
+    const uint8_t* params;  /* Binary blob for layer parameters */
+    
+    /* Recurrent state management */
+    float* hidden_state;    /* Hidden state buffer (for LSTM/GRU) */
+    float* cell_state;      /* Cell state buffer (for LSTM) */
+    int state_size;         /* Size of hidden/cell state */
+    
+    /* Dual-core and RAM protection */
+    int use_dual_core;      /* 1 = use dual core, 0 = single core */
+    int ram_limit_bytes;    /* RAM budget for this layer (0 = unlimited) */
+    int current_ram_usage;  /* Track RAM usage during inference */
 } bn_context_t;
 
 typedef void (*bn_layer_func)(bn_context_t* ctx);
