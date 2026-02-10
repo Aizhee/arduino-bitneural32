@@ -163,7 +163,7 @@ void kernel_conv1d_ternary(bn_context_t* ctx) {
     
     /* Stack cache for unpacked weights (float, not int8_t - for branchless FMA) */
     float unpacked_kernel[kernel_size];
-    float unpacked[4];
+    int8_t unpacked[4];
     
     for (int f = 0; f < filters; f++) {
         /* OPTIMIZATION 1: Unpack weights ONCE per filter (batch unpacking) */
@@ -219,7 +219,7 @@ void kernel_conv2d_ternary(bn_context_t* ctx) {
     
     /* Stack cache for unpacked weights per filter (float for branchless FMA) */
     float unpacked_kernel[kernel_h * kernel_w];
-    float unpacked[4];
+    int8_t unpacked[4];
     
     for (int f = 0; f < filters; f++) {
         /* OPTIMIZATION 1: Unpack weights ONCE per filter (batch unpacking) */
@@ -493,6 +493,7 @@ void kernel_lstm(bn_context_t* ctx) {
     float output_gate[hidden_size];
     float new_cell_state[hidden_size];
     float new_hidden_state[hidden_size];
+    int8_t unpacked[4];
     
     /* Extract gate biases */
     const float* bias_forget = (const float*)params;
@@ -634,6 +635,7 @@ void kernel_gru(bn_context_t* ctx) {
     float update_gate[hidden_size];
     float candidate[hidden_size];
     float new_hidden_state[hidden_size];
+    int8_t unpacked[4];
     
     /* Extract gate biases */
     const float* bias_reset = (const float*)params;
